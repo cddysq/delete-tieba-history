@@ -2,21 +2,26 @@ user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 cookie_file = './cookie.txt'
 
 [thread]
-enable = true
+enable = false
 start_page = 1
+max_error_count = 3
 
 [reply]
-enable = true
+enable = false
 start_page = 1
+max_error_count = 3
 
 [followed_ba]
 enable = false
 start_page = 1
+max_error_count = 3
 
 [concern]
-enable = false
+enable = true
 start_page = 1
+max_error_count = 3
 
 [fan]
 enable = false
 start_page = 1
+max_error_count = 3

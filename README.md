@@ -9,8 +9,8 @@
 ### 其他操作系统
 
 ```sh
-git clone https://github.com/rmb122/delete-my-history-in-tieba.git
-cd delete-my-history-in-tieba
+git clone https://github.com/cddysq/delete-tieba-history.git
+cd delete-tieba-history
 pip install -r requirements.txt
 ```
 
@@ -33,9 +33,10 @@ pip install -r requirements.txt
 [thread]
 enable = true
 start_page = 1
+max_error_count = 3
 ```
 
-`enable` 字段代表是否启动这个模块, `true` = 启动, `false` = 不启动, 默认开启对主题贴和回复的删除  
+`enable` 字段代表是否启动这个模块, `true` = 启动, `false` = 不启动, 默认开启账号关注删除  
 而 `start_page` 代表开始删除帖子的页数, 可以解决部分贴吧的 bug, 可以参考 [#31][2] 和下面的 FAQ
 
 例如将  
@@ -48,7 +49,8 @@ enable = true
 [thread]
 enable = false
 ```
-后, 将不会删除主题帖
+后, 将不会删除主题帖。
+`max_error_count`代表请求出现错误停止程序的最大限制次数
 
 ## FAQ
 

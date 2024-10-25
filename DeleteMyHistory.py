@@ -1,8 +1,10 @@
 import abc
 import copy
+import json
 import logging
 import re
 import sys
+import time
 import traceback
 import typing
 
@@ -23,6 +25,14 @@ class HashableDict(dict):
 class ModuleConfig(typing_extensions.TypedDict):
     enable: bool
     start_page: int
+    max_error_count: int
+
+
+default_module_config: ModuleConfig = {
+    'enable': False,  # 默认禁用
+    'start_page': 1,  # 默认从第一页开始
+    'max_error_count': 3  # 默认最大错误次数为 3
+}
 
 
 class GlobalConfig(typing_extensions.TypedDict):
@@ -40,14 +50,16 @@ class Module:
     _name: str
     _session: requests.Session
     _config: GlobalConfig
+    _module_config: ModuleConfig
+    _max_error_count: int
 
-    def __init__(self, session: requests.Session, config: GlobalConfig):
+    def __init__(self, name: str, session: requests.Session, config: GlobalConfig):
+        self._name = name
         self._session = session
         self._config = config
 
-    @property
-    def name(self):
-        return self._name
+        self._module_config = self._config.get(self._name, default_module_config)
+        self._max_error_count = self._module_config.get('max_error_count', 3)
 
     @property
     def session(self):
@@ -69,8 +81,7 @@ class Module:
 
     def run(self):
         # 没有配置启动, 直接返回
-        module_config: typing.Optional[ModuleConfig] = self._config.get(self.name, None)
-        if module_config is None or module_config.get('enable', False) is not True:
+        if not self._module_config.get('enable', False):
             return
 
         def remove_tbs(temp_entity: typing.Dict[str, str]) -> typing.Dict[str, str]:
@@ -80,8 +91,9 @@ class Module:
                 del temp_entity['tbs']
             return temp_entity
 
-        current_page = module_config.get('start_page', 1)
+        current_page = self._module_config.get('start_page', 1)
         deleted_entity = set()
+        error_count = 0
 
         logger.info(f'current in module [{self._name}]')
         while True:
@@ -106,11 +118,33 @@ class Module:
 
                     logger.info(f"now deleting [{entity}], in page [{current_page}]")
                     resp, stop = self._delete(entity)
-                    logger.info(f'delete response [{resp.text}]')
+                    # 处理响应，解码错误信息
+                    if resp is not None:
+                        try:
+                            response_json = resp.json()
+                            if response_json.get('no') == 0:
+                                logger.info(f"Successfully deleted user: {entity['id']}")
+                                error_count = 0
+                            else:
+                                logger.error(f"Failed to delete user: {entity['id']},  full response: {response_json}")
+                                error_count += 1
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to parse response for user: {entity['id']}, response: {resp.text}")
+                            error_count += 1
+                    else:
+                        logger.error(f"Failed to delete user: {entity['id']}, no response received.")
+                        error_count += 1
+                    # 检查是否超过最大错误次数
+                    if error_count >= self._max_error_count:
+                        logger.error(f"Reached maximum error count ({self._max_error_count}), stopping execution.")
+                        stop = True  # 设置 stop 为 True，立即停止
 
                     if stop:
                         logger.info(f"limit exceeded in [{self._name}], exiting")
-                        return
+                        sys.exit(-1)
+
+                    # 间隔调用接口
+                    time.sleep(1)
 
     @abc.abstractmethod
     def _collect(self, page: int) -> typing.List[typing.Dict[str, str]]:
@@ -123,8 +157,7 @@ class Module:
 
 class ThreadModule(Module):
     def __init__(self, session: requests.Session, config: GlobalConfig):
-        super().__init__(session, config)
-        self._name = 'thread'
+        super().__init__("thread", session, config)
 
     def _collect(self, page: int) -> typing.List[typing.Dict[str, str]]:
         tid_exp = re.compile(r"/([0-9]+)")
@@ -156,8 +189,7 @@ class ThreadModule(Module):
 
 class ReplyModule(Module):
     def __init__(self, session: requests.Session, config: GlobalConfig):
-        super().__init__(session, config)
-        self._name = 'reply'
+        super().__init__("reply", session, config)
 
     def _collect(self, page: int) -> typing.List[typing.Dict[str, str]]:
         tid_exp = re.compile(r"/([0-9]+)")
@@ -197,8 +229,7 @@ class ReplyModule(Module):
 
 class FollowedBaModule(Module):
     def __init__(self, session: requests.Session, config: GlobalConfig):
-        super().__init__(session, config)
-        self._name = 'followed_ba'
+        super().__init__("followed_ba", session, config)
 
     def _collect(self, page: int) -> typing.List[typing.Dict[str, str]]:
         ba_list = []
@@ -222,8 +253,7 @@ class FollowedBaModule(Module):
 
 class ConcernModule(Module):
     def __init__(self, session: requests.Session, config: GlobalConfig):
-        super().__init__(session, config)
-        self._name = 'concern'
+        super().__init__("concern", session, config)
 
     def _collect(self, page: int) -> typing.List[typing.Dict[str, str]]:
         concern_list = []
@@ -232,6 +262,7 @@ class ConcernModule(Module):
 
         html = bs4.BeautifulSoup(resp.text, "lxml")
         elements = html.find_all(name="input", attrs={"class": "btn_unfollow"})
+        logger.info(f'Page {page} - Found {len(elements)} concern users')
         for element in elements:
             concern_dict = dict()
             concern_dict["cmd"] = "unfollow"
@@ -248,8 +279,7 @@ class ConcernModule(Module):
 
 class FanModule(Module):
     def __init__(self, session: requests.Session, config: GlobalConfig):
-        super().__init__(session, config)
-        self._name = 'fan'
+        super().__init__("fan", session, config)
 
     def _collect(self, page: int) -> typing.List[typing.Dict[str, str]]:
         fan_list = []
