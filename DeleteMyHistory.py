@@ -11,6 +11,7 @@ import typing
 import bs4
 import requests
 import toml
+import threading
 import typing_extensions
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
@@ -57,7 +58,6 @@ class Module:
         self._name = name
         self._session = session
         self._config = config
-
         self._module_config = self._config.get(self._name, default_module_config)
         self._max_error_count = self._module_config.get('max_error_count', 3)
 
@@ -68,7 +68,6 @@ class Module:
     def _get_tbs(self):
         success = False
         resp = None
-
         while not success:
             try:
                 resp = self._session.get("https://tieba.baidu.com/dc/common/tbs", timeout=5)
@@ -317,6 +316,88 @@ def load_cookie(session: requests.Session, raw_cookie: str) -> requests.Session:
 def validate_cookie(session: requests.Session):
     resp = session.get('https://tieba.baidu.com/i/i/my_tie', allow_redirects=False)
     return resp.status_code == 200
+
+class DeleteMyHistory:
+    def __init__(self, log_callback=None):
+        self.session = None
+        self.config = None
+        self.running = False
+        self.log_callback = log_callback  # 用于将日志输出到 GUI 或控制台
+
+    def load_config(self, config_path: str, raw_cookie: str):
+        """加载配置文件和 Cookie"""
+        try:
+            with open(config_path, 'r') as f:
+                self.config = toml.load(f)
+
+            self.session = requests.session()
+            self.session = load_cookie(self.session, raw_cookie)  # 直接使用传入的 Cookie 字符串
+
+            user_agent = self.config.get('user_agent', None)
+            if user_agent:
+                self.session.headers["User-Agent"] = user_agent
+
+            if not validate_cookie(self.session):
+                self.log("cookie expired, please update it", level="fatal")
+                raise ValueError("Cookie 已过期，请更新 Cookie")
+
+            self.log("配置文件和 Cookie 加载成功")
+        except Exception as e:
+            self.log(f"加载配置文件或 Cookie 失败: {e}", level="error")
+            raise e
+
+    def log(self, message, level="info"):
+        """将日志输出到控制台和 GUI"""
+        if level == "info":
+            logger.info(message)
+        elif level == "error":
+            logger.error(message)
+        elif level == "fatal":
+            logger.fatal(message)
+
+        # 如果有 GUI 的日志回调函数，调用它
+        if self.log_callback:
+            self.log_callback(message)
+
+    def run_module(self, module_name: str):
+        """根据模块名称运行对应的模块"""
+        if not self.running:
+            self.log("请先启动任务", level="error")
+            return
+
+        module_mapping = {
+            "ThreadModule": ThreadModule,
+            "ReplyModule": ReplyModule,
+            "FollowedBaModule": FollowedBaModule,
+            "ConcernModule": ConcernModule,
+            "FanModule": FanModule
+        }
+
+        if module_name not in module_mapping:
+            self.log(f"未知模块: {module_name}", level="error")
+            return
+
+        module_class = module_mapping[module_name]
+        module = module_class(self.session, self.config)
+
+        self.log(f"开始运行模块: {module_name}")
+        module.run()
+
+    def start(self):
+        """启动任务"""
+        self.running = True
+        self.log("任务启动")
+
+    def stop(self):
+        """终止任务"""
+        self.running = False
+        self.log("任务终止")
+        sys.exit(0)
+
+    def run_module_in_thread(self, module_name: str):
+        """在单独的线程中运行模块"""
+        thread = threading.Thread(target=self.run_module, args=(module_name,))
+        thread.start()
 
 
 def main():
